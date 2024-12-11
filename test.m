@@ -171,15 +171,9 @@ for i = 1:length(image_files)
         %[x_right, y_right] = removeOutliers(x_right, y_right);
 
         % 使用最小二乘法进行直线拟合 (y = ax + b)
-        % 左边缘点拟合
-        left_coeffs = robustLinearFitWithOutlierRemoval(x_left, y_left); % [a_left, b_left]
-        a_left = left_coeffs(1);
-        b_left = left_coeffs(2);
-        
-        % 右边缘点拟合
-        right_coeffs = robustLinearFitWithOutlierRemoval(x_right, y_right); % [a_right, b_right]
-        a_right = right_coeffs(1);
-        b_right = right_coeffs(2);
+        % 使用 Huber 方法进行拟合
+        [a_left, b_left] = huberFit(x_left, y_left);
+        [a_right, b_right] = huberFit(x_right, y_right);
         
         % 显示拟合结果
         disp('左边缘直线拟合参数：');
@@ -282,28 +276,19 @@ function final_coeffs = robustLinearFitWithOutlierRemoval(x, y)
     end
 end
 
-% 使用中位数绝对偏差的加权最小二乘拟合
-function coeffs = RobustFit(x, y)
-    % 使用中位数绝对偏差(MAD)实现稳健加权拟合
-    % 输入: x, y 为数据点
-    % 输出: coeffs = [a, b] (y = ax + b)
-
-    % 初始拟合
-    A = [x(:), ones(size(x(:)))];  % 设计矩阵
-    beta = A \ y(:);  % 常规最小二乘解
-
-    % 计算残差
-    residuals = y(:) - A * beta;
-
-    % 计算MAD并更新权重
-    MAD = median(abs(residuals - median(residuals)));
-    weights = 1 ./ (1 + (abs(residuals) / (6 * MAD)).^2);  % Tukey's biweight
-
-    % 带权最小二乘拟合
-    W = diag(weights);  % 权重矩阵
-    beta = (A' * W * A) \ (A' * W * y(:));  % 带权最小二乘解
-
-    coeffs = beta';  % 返回拟合参数
+function [a, b] = huberFit(x, y)
+    % 使用 Matlab 的 fitlm 函数进行 Huber 鲁棒回归拟合
+    if length(x) >= 2
+        % 将 x 和 y 转换为表格形式
+        data = table(x, y);
+        % 使用 Huber 方法进行鲁棒回归
+        mdl = fitlm(data, 'y ~ x', 'RobustOpts', 'huber');
+        % 提取拟合的系数
+        a = mdl.Coefficients.Estimate(2);  % 斜率
+        b = mdl.Coefficients.Estimate(1);  % 截距
+    else
+        error('数据点不足，无法进行拟合');
+    end
 end
 
 
