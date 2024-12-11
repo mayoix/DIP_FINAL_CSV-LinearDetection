@@ -116,18 +116,51 @@ for i = 1:length(image_files)
         end
     end
 
+    % 使用H阈值分割后的图像
+    hsv_img_segmented_H = hsv_img;
+    hsv_img_segmented_H(:,:,1) = hsv_img_segmented_H(:,:,1) .* mask;  % 使用H通道的mask分割
+    
+    gray_img_H = uint8(mask) * 255;
+
+    % 显示并保存H阈值分割后的图像
+    %figure;
+    %imshow(hsv_img_segmented_H);
+    %imshow(gray_img_H);
+    %title('H阈值分割后的图像');
+    %saveas(gcf, 'H_threshold_segmented_image.jpg');
+
+
+    % 使用HSV阈值分割后的图像
+    hsv_img_segmented_HS = hsv_img;
+    hsv_img_segmented_HS(:,:,1) = hsv_img_segmented_HS(:,:,1) .* mask;  % 使用H通道的mask分割
+    hsv_img_segmented_HS(:,:,2) = hsv_img_segmented_HS(:,:,2) .* mask;  % 使用S通道的mask分割
+
     % 显示分割结果
     gray_img_HS = uint8(mask) * 255;
     figure;
+    %imshow(hsv_img_segmented_HS);
     imshow(gray_img_HS);
     title(['图像 ', image_files{i}, ' 分割结果']);
 
-    % 使用闭运算改善分割效果（可选）
-    se = strel('disk', 5);
-    gray_img_HS_dilated = imdilate(gray_img_HS, se);
-    gray_img_HS_closed = imerode(gray_img_HS_dilated, se);  
+    %比较发现H, S阈值分割后的图像效果更好，采用该分割方法
+    
+
+    %% 基于最小二乘法的直线目标检测
+
+    % 图像预处理
+
+    % 采用先膨胀后腐蚀的闭运算，填补小空洞
+    
+    se = strel('disk', 3);
+    gray_img_HS_dilated = imdilate(gray_img_HS, se);  % 膨胀操作
+    gray_img_HS_closed = imerode(gray_img_HS, se);  % 腐蚀操作
+
+    % 使用形态学重建，有效填补大空洞
+    gray_img_HS_recon = imreconstruct(gray_img_HS_closed, gray_img_HS_dilated);
+
+    
     figure;
-    imshow(gray_img_HS_closed);
+    imshow(gray_img_HS_recon);
     title(['图像 ', image_files{i}, ' 闭运算处理后的分割结果']);
 
 
@@ -136,7 +169,7 @@ for i = 1:length(image_files)
 
     % 参数设置
     n = 60;  % 沿x轴均匀选取的行数
-    [rows, cols] = size(gray_img_HS_closed);  % 获取二值图像的尺寸
+    [rows, cols] = size(gray_img_HS_recon);  % 获取二值图像的尺寸
     x_indices = round(linspace(1, rows, n));  % 均匀选取的行索引
     
     left_edge_points = [];  % 存储左边缘点集
@@ -145,7 +178,7 @@ for i = 1:length(image_files)
     % 步骤1：逐行提取边缘点
     for i = 1:length(x_indices)
         x = x_indices(i);
-        row_data = gray_img_HS_closed(x, :);  % 提取当前行的像素数据
+        row_data = gray_img_HS_recon(x, :);  % 提取当前行的像素数据
         transitions = diff([0, row_data > 0, 0]);  % 检测像素值的突变点
         start_points = find(transitions == 1);  % 边缘开始点
         end_points = find(transitions == -1) - 1;  % 边缘结束点
@@ -183,7 +216,7 @@ for i = 1:length(image_files)
         
         % 可视化边缘点和拟合直线
         figure;
-        imshow(gray_img_HS_closed); hold on;
+        imshow(gray_img_HS_recon); hold on;
         scatter(left_edge_points(:, 2), left_edge_points(:, 1), 'r', 'filled'); % 左边缘点
         scatter(right_edge_points(:, 2), right_edge_points(:, 1), 'g', 'filled'); % 右边缘点
         
@@ -199,6 +232,7 @@ for i = 1:length(image_files)
         disp('提取的边缘点不足，无法进行直线拟合');
     end
 end
+
 
 
 function intervals = mergeIntervals(bins, N, max_intervals)
@@ -220,61 +254,6 @@ end
 
 
 
-% 剔除离群点函数
-function [x_filtered, y_filtered] = removeOutliers(x, y)
-    % 使用中位数绝对偏差（MAD）剔除离群点
-    residuals = y - median(y);  % 计算与中位数的偏差
-    MAD = median(abs(residuals));  % 计算中位数绝对偏差
-    threshold = 2 * MAD;  % 设置阈值为2倍MAD
-    inliers = abs(residuals) <= threshold;  % 判断是否为内点
-    x_filtered = x(inliers);
-    y_filtered = y(inliers);
-end
-
-
-% 使用稳健线性拟合函数（支持迭代剔除离群点和中位数绝对偏差加权）
-function final_coeffs = robustLinearFitWithOutlierRemoval(x, y)
-    % 初始化
-    max_iterations = 100;  % 最大迭代次数
-    threshold_factor = 2;  % 离群点剔除阈值因子
-    prev_inliers = false(size(x));  % 上一次的内点集
-    final_coeffs = [0, 0];  % 初始拟合参数
-
-    for iter = 1:max_iterations
-        % 初始最小二乘拟合
-        A = [x(:), ones(size(x(:)))];  % 设计矩阵
-        beta = A \ y(:);  % 常规最小二乘解
-
-        % 计算残差
-        residuals = y(:) - A * beta;
-
-        % 计算误差中位数和阈值
-        med_residual = median(abs(residuals));
-        threshold = threshold_factor * med_residual;
-
-        % 标记内点
-        inliers = abs(residuals) <= threshold;
-
-        % 如果内点集未发生变化，终止迭代
-        if isequal(prev_inliers, inliers)
-            % 使用中位数绝对偏差加权对最终内点集拟合
-            coeffs = RobustFit(x(inliers), y(inliers));
-            final_coeffs = coeffs;
-            break;
-        end
-
-        % 更新内点集
-        prev_inliers = inliers;
-        x = x(inliers);
-        y = y(inliers);
-
-        % 如果内点数不足，终止迭代
-        if numel(x) < 2
-            warning('内点不足，无法拟合');
-            break;
-        end
-    end
-end
 
 function [a, b] = huberFit(x, y)
     % 使用 Matlab 的 fitlm 函数进行 Huber 鲁棒回归拟合
